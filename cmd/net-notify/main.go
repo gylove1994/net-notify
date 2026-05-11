@@ -61,6 +61,8 @@ func main() {
 		runCmd(os.Args[2:])
 	case "check":
 		checkCmd(os.Args[2:])
+	case "test-notify":
+		testNotifyCmd(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -74,8 +76,9 @@ func usage() {
 	fmt.Print(`net-notify — 网络连通性探测，失败时通过 dms / notify-send 发出通知
 
 用法:
-  net-notify run [flags]    持续探测（默认每分钟）
-  net-notify check [flags]  单次探测，仅设置退出码（不发送通知）
+  net-notify run [flags]            持续探测（默认每分钟）
+  net-notify check [flags]          单次探测，仅设置退出码（不发送通知）
+  net-notify test-notify [flags]    发送一条测试通知，验证 dms / notify-send 是否可用
 
 常用 flags:
   -config string      JSON 配置文件路径
@@ -89,6 +92,10 @@ func usage() {
   -notify-icon        dms notify --icon
   -notify-app         dms notify --app
   -dms-path           dms 可执行文件路径（默认 PATH 中 dms）
+
+test-notify 额外 flags:
+  -summary string      自定义通知标题（默认内置测试标题）
+  -body string          自定义通知正文（默认带时间戳的测试正文）
 
 `)
 }
@@ -177,6 +184,56 @@ func parseRunFlags(args []string, base runOptions) (runOptions, error) {
 		o.urls = cliURLs
 	}
 	return o, nil
+}
+
+func parseTestNotifyFlags(args []string, base runOptions) (runOptions, string, string, error) {
+	fs := flag.NewFlagSet("test-notify", flag.ContinueOnError)
+	o := base
+	var summaryFlag, bodyFlag string
+	fs.StringVar(&o.configPath, "config", "", "JSON config path")
+	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "dms or notify-send")
+	fs.IntVar(&o.notifyTimeout, "notify-timeout-ms", o.notifyTimeout, "dms notify --timeout (ms)")
+	fs.StringVar(&o.notifyIcon, "notify-icon", o.notifyIcon, "dms notify --icon")
+	fs.StringVar(&o.notifyApp, "notify-app", o.notifyApp, "dms notify --app")
+	fs.StringVar(&o.dmsPath, "dms-path", o.dmsPath, "path to dms binary")
+	fs.StringVar(&summaryFlag, "summary", "", "notification summary (default if empty)")
+	fs.StringVar(&bodyFlag, "body", "", "notification body (default if empty)")
+	if err := fs.Parse(args); err != nil {
+		return o, "", "", err
+	}
+	summary := summaryFlag
+	if summary == "" {
+		summary = "net-notify 测试通知"
+	}
+	body := bodyFlag
+	if body == "" {
+		body = fmt.Sprintf("这是一条用于验证通知链路的测试消息。\n时间: %s", time.Now().Format(time.RFC3339))
+	}
+	return o, summary, body, nil
+}
+
+func testNotifyCmd(args []string) {
+	base, err := mergeConfig(defaults(), configPathFromArgs(args))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	o, summary, body, err := parseTestNotifyFlags(args, base)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	n := buildNotifier(o.notifyBackend, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
+	summary = notify.TruncateSummary(summary, 120)
+	body = notify.TruncateBody(body, 8000)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := n.Notify(ctx, summary, body); err != nil {
+		fmt.Fprintf(os.Stderr, "test-notify: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("test-notify: ok")
 }
 
 func effectiveURLs(urls []string) []string {
