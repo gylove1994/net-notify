@@ -80,6 +80,19 @@ func AnyFail(results []Result) bool {
 	return len(results) == 0
 }
 
+// AllFail is true if every result is not OK (all_fail policy). Empty matches AnyFail(empty).
+func AllFail(results []Result) bool {
+	if len(results) == 0 {
+		return true
+	}
+	for _, r := range results {
+		if r.OK() {
+			return false
+		}
+	}
+	return true
+}
+
 // FormatReport builds a human-readable probe report for notifications or logs.
 func FormatReport(results []Result) string {
 	var failed, ok strings.Builder

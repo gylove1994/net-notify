@@ -63,6 +63,38 @@ func TestAnyFail_Empty(t *testing.T) {
 	}
 }
 
+func TestAllFail(t *testing.T) {
+	srvOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srvOK.Close)
+	srvBad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srvBad.Close)
+
+	ctx := context.Background()
+	client := newClient()
+	ok := ProbeOne(ctx, client, srvOK.URL, 2*time.Second)
+	bad := ProbeOne(ctx, client, srvBad.URL, 2*time.Second)
+
+	if AllFail([]Result{ok, bad}) {
+		t.Fatal("expected not all fail")
+	}
+	if !AllFail([]Result{bad, bad}) {
+		t.Fatal("expected all fail")
+	}
+	if AllFail([]Result{ok}) {
+		t.Fatal("single ok should not be all fail")
+	}
+}
+
+func TestAllFail_Empty(t *testing.T) {
+	if !AllFail(nil) {
+		t.Fatal("empty should match any_fail empty semantics")
+	}
+}
+
 func TestProbeAll_NoCacheHeaders(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

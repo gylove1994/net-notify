@@ -12,6 +12,7 @@ import (
 
 	"github.com/gylove1994/net-notify/internal/config"
 	"github.com/gylove1994/net-notify/internal/notify"
+	"github.com/gylove1994/net-notify/internal/policy"
 	"github.com/gylove1994/net-notify/internal/probe"
 	"github.com/gylove1994/net-notify/internal/state"
 )
@@ -26,10 +27,16 @@ func (s *stringList) Set(v string) error {
 }
 
 type runOptions struct {
-	configPath     string
-	interval       time.Duration
+	configPath string
+	interval   time.Duration
+	urls       stringList
+
+	urlFromCLI        bool
+	useConfigGroups   bool
+	configProbeLayout policy.Layout
+	notifyWhen        string // any_fail | all_fail for flat URL mode (CLI or default URLs)
+
 	requestTimeout time.Duration
-	urls           stringList
 	once           bool
 	alertCooldown  time.Duration
 	notifyBackend  string
@@ -86,7 +93,8 @@ func usage() {
   -config string      JSON 配置文件路径
   -interval duration  探测周期间隔（默认 1m，仅 run）
   -timeout duration   单次 HTTP 请求超时（默认 10s）
-  -url string         目标 URL（可重复；默认三大站点）
+  -url string         目标 URL（可重复；无 -url 且无配置时为内置 Google+GitHub + 百度 分组；-url 出现时忽略配置的 urls/groups）
+  -notify-when        与 -url 联用：flat 一组 URL 的策略 any-fail | all-fail（默认 any-fail）
   -once               只运行一轮后退出（仍会在失败时通知，但不使用冷却；仅 run）
   -alert-cooldown     持续失败时的重复通知最小间隔（默认 15m，仅 run 且非 -once）
   -notify-backend     dms | notify-send（默认 dms）
@@ -128,7 +136,14 @@ func mergeConfig(base runOptions, path string) (runOptions, error) {
 		}
 		base.requestTimeout = d
 	}
-	if len(f.URLs) > 0 {
+	if len(f.Groups) > 0 {
+		layout, err := config.LayoutFromGroups(f.Groups)
+		if err != nil {
+			return base, fmt.Errorf("config: %w", err)
+		}
+		base.useConfigGroups = true
+		base.configProbeLayout = layout
+	} else if len(f.URLs) > 0 {
 		base.urls = append(stringList(nil), f.URLs...)
 	}
 	if f.AlertCooldown != "" {
@@ -182,6 +197,7 @@ func parseRunFlags(args []string, base runOptions) (runOptions, error) {
 	fs.DurationVar(&o.interval, "interval", o.interval, "poll interval")
 	fs.DurationVar(&o.requestTimeout, "timeout", o.requestTimeout, "per-request HTTP timeout")
 	fs.Var(&cliURLs, "url", "probe URL (repeatable)")
+	fs.StringVar(&o.notifyWhen, "notify-when", o.notifyWhen, "any-fail or all-fail (flat -url list only)")
 	fs.BoolVar(&o.once, "once", false, "single round then exit")
 	fs.DurationVar(&o.alertCooldown, "alert-cooldown", o.alertCooldown, "min time between repeated failure alerts")
 	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "dms or notify-send")
@@ -196,6 +212,8 @@ func parseRunFlags(args []string, base runOptions) (runOptions, error) {
 	}
 	if len(cliURLs) > 0 {
 		o.urls = cliURLs
+		o.urlFromCLI = true
+		o.useConfigGroups = false
 	}
 	return o, nil
 }
@@ -260,6 +278,26 @@ func effectiveURLs(urls []string) []string {
 	return append([]string(nil), urls...)
 }
 
+func resolveProbeLayout(o runOptions) (policy.Layout, error) {
+	if o.urlFromCLI {
+		when, err := policy.ParseWhen(o.notifyWhen)
+		if err != nil {
+			return policy.Layout{}, fmt.Errorf("-notify-when: %w", err)
+		}
+		return policy.SingleGroup(effectiveURLs(o.urls), when), nil
+	}
+	if strings.TrimSpace(o.notifyWhen) != "" {
+		return policy.Layout{}, fmt.Errorf("-notify-when is only valid with -url")
+	}
+	if o.useConfigGroups {
+		return o.configProbeLayout, nil
+	}
+	if len(o.urls) > 0 {
+		return policy.SingleGroup(effectiveURLs(o.urls), policy.WhenAnyFail), nil
+	}
+	return policy.BuiltinDefaultLayout(), nil
+}
+
 func buildNotifier(backend, urgency, dmsPath, app string, timeoutMs int, icon string) notify.Notifier {
 	u := notify.NormalizeUrgency(urgency)
 	switch notify.BackendName(backend) {
@@ -285,7 +323,11 @@ func runCmd(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	urls := effectiveURLs(o.urls)
+	layout, err := resolveProbeLayout(o)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	cd := &state.Cooldown{Cooldown: o.alertCooldown}
 	n := buildNotifier(o.notifyBackend, o.notifyUrgency, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
 
@@ -293,8 +335,8 @@ func runCmd(args []string) {
 	defer stop()
 
 	runRound := func() bool {
-		results := probe.ProbeAll(ctx, urls, o.requestTimeout)
-		failing := probe.AnyFail(results)
+		results := probe.ProbeAll(ctx, layout.FlatURLs, o.requestTimeout)
+		failing, triggered := policy.Evaluate(layout, results)
 		if o.verbose {
 			ok := 0
 			for _, r := range results {
@@ -302,8 +344,8 @@ func runCmd(args []string) {
 					ok++
 				}
 			}
-			fmt.Fprintf(os.Stderr, "%s net-notify: probe round urls=%d ok=%d failing=%v\n",
-				time.Now().Format(time.RFC3339), len(results), ok, failing)
+			fmt.Fprintf(os.Stderr, "%s net-notify: probe round urls=%d ok=%d failing=%v triggered_groups=%v\n",
+				time.Now().Format(time.RFC3339), len(results), ok, failing, triggered)
 		}
 		if !failing {
 			cd.ShouldNotify(time.Now(), false)
@@ -313,7 +355,11 @@ func runCmd(args []string) {
 		if !should {
 			return true
 		}
-		body := notify.TruncateBody(probe.FormatReport(results), 8000)
+		body := probe.FormatReport(results)
+		if len(triggered) > 0 {
+			body = "触发分组: " + strings.Join(triggered, ", ") + "\n\n" + body
+		}
+		body = notify.TruncateBody(body, 8000)
 		// DMS over DBus rejects some longer CJK summaries (bogus "not-utf8" error); keep title short.
 		summary := notify.TruncateSummary("网络探测失败", 32)
 		nctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -358,12 +404,20 @@ func checkCmd(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	urls := effectiveURLs(o.urls)
+	layout, err := resolveProbeLayout(o)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	ctx := context.Background()
-	results := probe.ProbeAll(ctx, urls, o.requestTimeout)
-	if probe.AnyFail(results) {
-		fmt.Println(probe.FormatReport(results))
+	results := probe.ProbeAll(ctx, layout.FlatURLs, o.requestTimeout)
+	failing, triggered := policy.Evaluate(layout, results)
+	report := probe.FormatReport(results)
+	if len(triggered) > 0 {
+		report = "触发分组: " + strings.Join(triggered, ", ") + "\n\n" + report
+	}
+	fmt.Println(report)
+	if failing {
 		os.Exit(1)
 	}
-	fmt.Println(probe.FormatReport(results))
 }

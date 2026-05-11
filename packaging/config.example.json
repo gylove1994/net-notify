@@ -1,10 +1,20 @@
 {
   "interval": "1m",
   "timeout": "10s",
-  "urls": [
-    "https://www.google.com",
-    "https://www.github.com",
-    "https://www.baidu.com"
+  "groups": [
+    {
+      "name": "Google+GitHub",
+      "urls": [
+        "https://www.google.com",
+        "https://www.github.com"
+      ],
+      "notify_when": "all_fail"
+    },
+    {
+      "name": "百度",
+      "urls": ["https://www.baidu.com"],
+      "notify_when": "any_fail"
+    }
   ],
   "alert_cooldown": "15m",
   "notify_timeout_ms": 30000,
