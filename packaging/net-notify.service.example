@@ -10,6 +10,7 @@ RestartSec=10
 
 # Ensure `dms` is found if installed outside standard paths:
 # Environment=PATH=/usr/local/bin:/usr/bin
+PassEnvironment=DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR
 
 [Install]
 WantedBy=default.target
