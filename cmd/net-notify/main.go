@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -72,6 +73,8 @@ func main() {
 		checkCmd(os.Args[2:])
 	case "test-notify":
 		testNotifyCmd(os.Args[2:])
+	case "groups":
+		groupsCmd(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -88,6 +91,7 @@ func usage() {
   net-notify run [flags]            持续探测（默认每分钟）
   net-notify check [flags]          单次探测，仅设置退出码（不发送通知）
   net-notify test-notify [flags]    发送一条测试通知，验证 notify-send / dms 是否可用
+  net-notify groups list|set-name   列出或编辑配置文件中的分组名称（需 -config）
 
 常用 flags:
   -config string      JSON 配置文件路径
@@ -110,6 +114,12 @@ test-notify 额外 flags:
   -summary string      自定义通知标题（默认内置测试标题）
   -body string          自定义通知正文（默认带时间戳的测试正文）
   -notify-urgency       同 run
+
+groups 子命令:
+  net-notify groups list -config <path>
+      打印分组表：索引(从0)、json 中的 name、生效名称、URL 数量、notify_when；仅适用含 \"groups\" 的配置
+  net-notify groups set-name <index> <name> -config <path>
+      将 groups[index].name 写入文件；<name> 可含空格（置于命令行末尾）；写前会校验整份配置
 
 `)
 }
@@ -269,6 +279,89 @@ func testNotifyCmd(args []string) {
 	fmt.Println("test-notify: ok")
 }
 
+func groupsCmd(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: net-notify groups list|set-name ... (-h for help)")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		groupsListCmd(args[1:])
+	case "set-name":
+		groupsSetNameCmd(args[1:])
+	case "help", "-h", "--help":
+		fmt.Print(`groups 子命令（须指定 -config）:
+  net-notify groups list -config <path>
+  net-notify groups set-name <index> <name> -config <path>
+  索引 index 从 0 起，与 JSON 中 groups 数组下标一致。
+`)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown groups subcommand: %s\n", args[0])
+		os.Exit(2)
+	}
+}
+
+func groupsListCmd(args []string) {
+	fs := flag.NewFlagSet("groups list", flag.ContinueOnError)
+	var cfg string
+	fs.StringVar(&cfg, "config", "", "JSON config path")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if cfg == "" {
+		fmt.Fprintln(os.Stderr, "groups list: -config is required")
+		os.Exit(2)
+	}
+	f, err := config.Load(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if len(f.Groups) == 0 {
+		fmt.Println("no groups in config (flat \"urls\" only or empty groups); nothing to list")
+		return
+	}
+	fmt.Println("index\tname_in_json\teffective_name\turls\tnotify_when")
+	for i, g := range f.Groups {
+		jsonName := "(empty)"
+		if strings.TrimSpace(g.Name) != "" {
+			jsonName = g.Name
+		}
+		fmt.Printf("%d\t%s\t%s\t%d\t%s\n", i, jsonName, g.EffectiveName(i), len(g.URLs), g.NotifyWhen)
+	}
+}
+
+func groupsSetNameCmd(args []string) {
+	fs := flag.NewFlagSet("groups set-name", flag.ContinueOnError)
+	var cfg string
+	fs.StringVar(&cfg, "config", "", "JSON config path")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if cfg == "" {
+		fmt.Fprintln(os.Stderr, "groups set-name: -config is required")
+		os.Exit(2)
+	}
+	rest := fs.Args()
+	if len(rest) < 2 {
+		fmt.Fprintln(os.Stderr, "groups set-name: need <index> and <name>")
+		os.Exit(2)
+	}
+	idx, err := strconv.Atoi(rest[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "groups set-name: invalid index %q: %v\n", rest[0], err)
+		os.Exit(2)
+	}
+	name := strings.Join(rest[1:], " ")
+	if err := config.UpdateGroupName(cfg, idx, name); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("groups set-name: ok")
+}
+
 func effectiveURLs(urls []string) []string {
 	if len(urls) == 0 {
 		out := make([]string, len(probe.DefaultURLs))
@@ -328,7 +421,15 @@ func runCmd(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	cd := &state.Cooldown{Cooldown: o.alertCooldown}
+	groupCD := make(map[string]*state.Cooldown)
+	cooldownFor := func(name string) *state.Cooldown {
+		cd, ok := groupCD[name]
+		if !ok {
+			cd = &state.Cooldown{Cooldown: o.alertCooldown}
+			groupCD[name] = cd
+		}
+		return cd
+	}
 	n := buildNotifier(o.notifyBackend, o.notifyUrgency, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -336,7 +437,13 @@ func runCmd(args []string) {
 
 	runRound := func() bool {
 		results := probe.ProbeAll(ctx, layout.FlatURLs, o.requestTimeout)
-		failing, triggered := policy.Evaluate(layout, results)
+		outcomes, alerting := policy.EvaluateGroups(layout, results)
+		var triggered []string
+		for _, oc := range outcomes {
+			if oc.Fires {
+				triggered = append(triggered, oc.Name)
+			}
+		}
 		if o.verbose {
 			ok := 0
 			for _, r := range results {
@@ -345,28 +452,42 @@ func runCmd(args []string) {
 				}
 			}
 			fmt.Fprintf(os.Stderr, "%s net-notify: probe round urls=%d ok=%d failing=%v triggered_groups=%v\n",
-				time.Now().Format(time.RFC3339), len(results), ok, failing, triggered)
+				time.Now().Format(time.RFC3339), len(results), ok, alerting, triggered)
 		}
-		if !failing {
-			cd.ShouldNotify(time.Now(), false)
+		now := time.Now()
+		if !alerting {
+			for _, oc := range outcomes {
+				cooldownFor(oc.Name).ShouldNotify(now, false)
+			}
 			return false
 		}
-		should := o.once || cd.ShouldNotify(time.Now(), true)
-		if !should {
-			return true
-		}
-		body := probe.FormatReport(results)
-		if len(triggered) > 0 {
-			body = "触发分组: " + strings.Join(triggered, ", ") + "\n\n" + body
-		}
-		body = notify.TruncateBody(body, 8000)
-		// DMS over DBus rejects some longer CJK summaries (bogus "not-utf8" error); keep title short.
-		summary := notify.TruncateSummary("网络探测失败", 32)
-		nctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := n.Notify(nctx, summary, body)
-		cancel()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "notify: %v\n", err)
+		for _, oc := range outcomes {
+			cd := cooldownFor(oc.Name)
+			if !oc.Fires {
+				cd.ShouldNotify(now, false)
+				continue
+			}
+			should := o.once || cd.ShouldNotify(now, true)
+			if !should {
+				continue
+			}
+			body := probe.FormatReport(oc.Results)
+			if oc.Name != "default" {
+				body = "组名称: " + oc.Name + "\n\n" + body
+			}
+			body = notify.TruncateBody(body, 8000)
+			// DMS over DBus rejects some longer CJK summaries (bogus "not-utf8" error); keep title short.
+			summaryTitle := "网络探测失败：" + oc.Name
+			if oc.Name == "default" {
+				summaryTitle = "网络探测失败"
+			}
+			summary := notify.TruncateSummary(summaryTitle, 32)
+			nctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			err := n.Notify(nctx, summary, body)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "notify: %v\n", err)
+			}
 		}
 		return true
 	}

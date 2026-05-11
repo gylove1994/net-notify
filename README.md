@@ -34,13 +34,19 @@ go build -o net-notify ./cmd/net-notify
 
 # 单次检查，打印报告，不发通知（与 run 相同的分组 / notify_when 语义；便于脚本）
 ./net-notify check
+
+# 分组名称：列出 JSON 中 groups 的索引与名称（须含 groups，不适用仅 urls 的 flat 配置）
+./net-notify groups list -config ~/.config/net-notify/config.json
+
+# 将 groups[0] 的 name 写入配置文件（请把 -config 及路径写在 set-name 与索引之前，以便正确解析）
+./net-notify groups set-name -config ~/.config/net-notify/config.json 0 "家里宽带"
 ```
 
 配置文件为 **JSON**（见 [packaging/config.example.json](packaging/config.example.json)）。使用 `-config` 指定；命令行 flag 会覆盖文件中对应项（命令行若出现 `-url`，则**仅使用**命令行 URL，并忽略配置文件里的 **`urls` 与 `groups`**）。配置项 `verbose: true` 或 `run -verbose` 会在每轮探测后向 stderr 打一行摘要，便于 `journalctl --user -u net-notify` 对照间隔（默认 `interval` 为 **1m**）。**`notify_urgency`**：`low` | `normal` | `critical`（默认 `critical`）。
 
 ### 分组与 `notify_when`（内置默认与 JSON）
 
-不能与顶层 **`urls`** 同时出现：`groups` 非空时请删去（或不要写）`urls`。每个分组：`name`、`urls`、`notify_when` 为 **`any_fail`**（组内任一失败即该组告警）或 **`all_fail`**（组内全部失败该组才告警）。同一 URL 可出现在多个组中；探测会去重，`all_fail` 常用于「互为备份的一组站点，单个失败不响、全挂才响」。
+不能与顶层 **`urls`** 同时出现：`groups` 非空时请删去（或不要写）`urls`。每个分组：`name`、`urls`、`notify_when` 为 **`any_fail`**（组内任一失败即该组告警）或 **`all_fail`**（组内全部失败该组才告警）。同一 URL 可出现在多个组中；探测会去重，`all_fail` 常用于「互为备份的一组站点，单个失败不响、全挂才响」。**`name` 可直接改 JSON，也可用** `net-notify groups list` **/** `groups set-name` **命令编辑**（见上一节示例）。
 
 [packaging/config.example.json](packaging/config.example.json) 与内置默认分组一致：**Google+GitHub**（`all_fail`）与 **百度**（`any_fail`）。
 
@@ -78,11 +84,11 @@ go build -o net-notify ./cmd/net-notify
 
 仅用顶层 **`urls`**、不做分组的写法仍受支持（整表 `any_fail`）。
 
-**说明**：程序**只在探测失败时**推送通知；网络一直正常时不会弹窗（除你手动执行的 `test-notify`）。经 DBus / 通知服务器发送时，**过长或特殊标题**可能触发实现方错误；默认失败标题已缩短为 **`网络探测失败`**。
+**说明**：程序**只在探测失败时**推送通知；网络一直正常时不会弹窗（除你手动执行的 `test-notify`）。配置**多组**时，每个在本轮触发的分组各发**一条**通知，正文仅含该组 URL 的探测结果；单组（含命令行 `-url` 的整表一组，组名 `default`）时标题仍为 **`网络探测失败`**，多组时标题为 **`网络探测失败：<组名>`**（经截断以兼容部分通知服务）。`check` 仍打印**整表**探测报告并列出触发分组，与 `run` 的「按组拆条通知」不同。
 
 ### 告警冷却
 
-持续失败时，默认 **15 分钟内最多重复通知一次**（`-alert-cooldown`）。从正常变为失败时**立即**通知。
+持续失败时，默认 **15 分钟内同一分组最多重复通知一次**（`-alert-cooldown` / `alert_cooldown`）；**各分组独立计数**。从正常变为失败时，该分组**立即**通知；某一组恢复为不触发时，仅重置该组的失败/冷却状态。
 
 ## systemd（用户服务）
 

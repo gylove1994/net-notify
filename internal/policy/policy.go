@@ -67,15 +67,24 @@ func BuiltinDefaultLayout() Layout {
 	}
 }
 
-// Evaluate runs each group's policy; alerting is true if any group fires.
-func Evaluate(layout Layout, results []probe.Result) (alerting bool, triggered []string) {
+// GroupOutcome is one layout group's evaluation for a single probe round.
+type GroupOutcome struct {
+	Name    string
+	Fires   bool
+	Results []probe.Result // same order as the group's URLs
+}
+
+// EvaluateGroups runs each group's policy. alerting is true if any group fires.
+// outcomes are in the same order as layout.Groups.
+func EvaluateGroups(layout Layout, results []probe.Result) (outcomes []GroupOutcome, alerting bool) {
 	if len(results) != len(layout.FlatURLs) {
-		return false, nil
+		return nil, false
 	}
 	byURL := make(map[string]probe.Result, len(layout.FlatURLs))
 	for i, u := range layout.FlatURLs {
 		byURL[u] = results[i]
 	}
+	outcomes = make([]GroupOutcome, 0, len(layout.Groups))
 	for _, g := range layout.Groups {
 		sub := make([]probe.Result, 0, len(g.URLs))
 		for _, u := range g.URLs {
@@ -92,7 +101,21 @@ func Evaluate(layout Layout, results []probe.Result) (alerting bool, triggered [
 		}
 		if fires {
 			alerting = true
-			triggered = append(triggered, g.Name)
+		}
+		outcomes = append(outcomes, GroupOutcome{Name: g.Name, Fires: fires, Results: sub})
+	}
+	return outcomes, alerting
+}
+
+// Evaluate runs each group's policy; alerting is true if any group fires.
+func Evaluate(layout Layout, results []probe.Result) (alerting bool, triggered []string) {
+	outcomes, alerting := EvaluateGroups(layout, results)
+	if !alerting {
+		return false, nil
+	}
+	for _, o := range outcomes {
+		if o.Fires {
+			triggered = append(triggered, o.Name)
 		}
 	}
 	return alerting, triggered

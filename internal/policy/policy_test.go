@@ -121,4 +121,47 @@ func TestEvaluate_BadResultLength(t *testing.T) {
 	if a || len(n) > 0 {
 		t.Fatal("mismatched length should not alert")
 	}
+	out, alert := EvaluateGroups(layout, nil)
+	if alert || out != nil {
+		t.Fatal("EvaluateGroups: mismatched length should return nil, false")
+	}
+}
+
+func TestEvaluateGroups_ResultOrderMatchesGroupURLs(t *testing.T) {
+	u1, u2 := "http://first", "http://second"
+	layout := Layout{
+		FlatURLs: []string{u1, u2},
+		Groups: []Group{
+			{Name: "rev", When: WhenAnyFail, URLs: []string{u2, u1}},
+		},
+	}
+	r1 := probe.Result{URL: u1, StatusCode: 200}
+	r2 := probe.Result{URL: u2, StatusCode: 503}
+	// Flat probe order u1 then u2
+	out, alert := EvaluateGroups(layout, []probe.Result{r1, r2})
+	if !alert || len(out) != 1 {
+		t.Fatalf("got %+v alert=%v", out, alert)
+	}
+	if len(out[0].Results) != 2 || out[0].Results[0].URL != u2 || out[0].Results[1].URL != u1 {
+		t.Fatalf("results order: %+v", out[0].Results)
+	}
+}
+
+func TestEvaluateGroups_AllOutcomesPresentWhenQuiet(t *testing.T) {
+	u1, u2 := "http://a", "http://b"
+	layout := Layout{
+		FlatURLs: []string{u1, u2},
+		Groups: []Group{
+			{Name: "allbad", When: WhenAllFail, URLs: []string{u1, u2}},
+			{Name: "any", When: WhenAnyFail, URLs: []string{u1}},
+		},
+	}
+	ok := func(u string) probe.Result { return probe.Result{URL: u, StatusCode: 200} }
+	out, alert := EvaluateGroups(layout, []probe.Result{ok(u1), ok(u2)})
+	if alert {
+		t.Fatal("expected no alert")
+	}
+	if len(out) != 2 || out[0].Fires || out[1].Fires {
+		t.Fatalf("expected two non-firing outcomes: %+v", out)
+	}
 }
