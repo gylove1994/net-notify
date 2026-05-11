@@ -31,7 +31,9 @@ go build -o net-notify ./cmd/net-notify
 ./net-notify check
 ```
 
-配置文件为 **JSON**（见 [packaging/config.example.json](packaging/config.example.json)）。使用 `-config` 指定；命令行 flag 会覆盖文件中对应项（URL 若在命令行出现 `-url`，则**仅使用**命令行 URL）。
+配置文件为 **JSON**（见 [packaging/config.example.json](packaging/config.example.json)）。使用 `-config` 指定；命令行 flag 会覆盖文件中对应项（URL 若在命令行出现 `-url`，则**仅使用**命令行 URL）。配置项 `verbose: true` 或 `run -verbose` 会在每轮探测后向 stderr 打一行摘要，便于 `journalctl --user -u net-notify` 对照间隔（默认 `interval` 为 **1m**）。
+
+**说明**：程序**只在探测失败时**推送通知；网络一直正常时不会弹窗（除你手动执行的 `test-notify`）。DMS 经 DBus 发送通知时，**过长/过长的纯中文标题**可能触发其内部错误；默认失败标题已缩短为 **`网络探测失败`**。
 
 ### 告警冷却
 

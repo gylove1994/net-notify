@@ -11,5 +11,6 @@
   "notify_icon": "network-error",
   "notify_app": "net-notify",
   "notify_backend": "dms",
-  "dms_path": ""
+  "dms_path": "",
+  "verbose": false
 }

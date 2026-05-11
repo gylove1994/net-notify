@@ -37,6 +37,7 @@ type runOptions struct {
 	notifyIcon     string
 	notifyApp      string
 	dmsPath        string
+	verbose        bool
 }
 
 func defaults() runOptions {
@@ -92,6 +93,7 @@ func usage() {
   -notify-icon        dms notify --icon
   -notify-app         dms notify --app
   -dms-path           dms 可执行文件路径（默认 PATH 中 dms）
+  -verbose            每轮探测后向 stderr 打印一行摘要（便于 journalctl 观察周期）
 
 test-notify 额外 flags:
   -summary string      自定义通知标题（默认内置测试标题）
@@ -147,6 +149,9 @@ func mergeConfig(base runOptions, path string) (runOptions, error) {
 	if f.DMSPath != "" {
 		base.dmsPath = f.DMSPath
 	}
+	if f.Verbose {
+		base.verbose = true
+	}
 	return base, nil
 }
 
@@ -177,6 +182,7 @@ func parseRunFlags(args []string, base runOptions) (runOptions, error) {
 	fs.StringVar(&o.notifyIcon, "notify-icon", o.notifyIcon, "dms notify --icon")
 	fs.StringVar(&o.notifyApp, "notify-app", o.notifyApp, "dms notify --app")
 	fs.StringVar(&o.dmsPath, "dms-path", o.dmsPath, "path to dms binary")
+	fs.BoolVar(&o.verbose, "verbose", o.verbose, "log each probe round to stderr")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -275,6 +281,16 @@ func runCmd(args []string) {
 	runRound := func() bool {
 		results := probe.ProbeAll(ctx, urls, o.requestTimeout)
 		failing := probe.AnyFail(results)
+		if o.verbose {
+			ok := 0
+			for _, r := range results {
+				if r.OK() {
+					ok++
+				}
+			}
+			fmt.Fprintf(os.Stderr, "%s net-notify: probe round urls=%d ok=%d failing=%v\n",
+				time.Now().Format(time.RFC3339), len(results), ok, failing)
+		}
 		if !failing {
 			cd.ShouldNotify(time.Now(), false)
 			return false
@@ -284,7 +300,8 @@ func runCmd(args []string) {
 			return true
 		}
 		body := notify.TruncateBody(probe.FormatReport(results), 8000)
-		summary := notify.TruncateSummary("网络探测失败（任一目标异常）", 120)
+		// DMS over DBus rejects some longer CJK summaries (bogus "not-utf8" error); keep title short.
+		summary := notify.TruncateSummary("网络探测失败", 32)
 		nctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		err := n.Notify(nctx, summary, body)
 		cancel()

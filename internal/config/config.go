@@ -17,6 +17,7 @@ type File struct {
 	NotifyApp       string   `json:"notify_app"`
 	NotifyBackend   string   `json:"notify_backend"`
 	DMSPath         string   `json:"dms_path"`
+	Verbose         bool     `json:"verbose"`
 }
 
 // Load reads JSON config from path.
