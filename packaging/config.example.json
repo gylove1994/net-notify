@@ -1,0 +1,15 @@
+{
+  "interval": "1m",
+  "timeout": "10s",
+  "urls": [
+    "https://www.google.com",
+    "https://www.github.com",
+    "https://www.baidu.com"
+  ],
+  "alert_cooldown": "15m",
+  "notify_timeout_ms": 30000,
+  "notify_icon": "network-error",
+  "notify_app": "net-notify",
+  "notify_backend": "dms",
+  "dms_path": ""
+}

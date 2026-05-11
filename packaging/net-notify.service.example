@@ -1,0 +1,15 @@
+[Unit]
+Description=Network connectivity probe with DMS notifications
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/net-notify run --config %h/.config/net-notify/config.json
+Restart=on-failure
+RestartSec=10
+
+# Ensure `dms` is found if installed outside standard paths:
+# Environment=PATH=/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=default.target

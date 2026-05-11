@@ -1,0 +1,15 @@
+# Binaries
+/bin/
+/dist/
+/net-notify
+
+# Go
+coverage.out
+*.exe
+*.test
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
