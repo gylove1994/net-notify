@@ -1,11 +1,13 @@
 # net-notify
 
-周期性探测公网 URL 的连通性；**任一**目标失败时通过 **DMS**（`dms notify`，DankMaterialShell）或 **`notify-send -u critical`** 推送桌面通知。HTTP 请求带 **no-cache** 相关头，不启用磁盘缓存。
+周期性探测公网 URL 的连通性；**任一**目标失败时推送桌面通知。HTTP 请求带 **no-cache** 相关头，不启用磁盘缓存。
+
+默认 **严重程度（urgency）为 `critical`**：与 DMS 设置中的「紧急」一致；因 `dms notify` CLI **无** urgency 参数，此时实际通过 **`notify-send -u critical`** 发送（由 DMS / Freedesktop 通知服务接收）。若将 `notify_urgency` 设为 **`normal`**，则改用 **`dms notify`**。亦可 `-notify-backend notify-send` 并配合 `-notify-urgency`。
 
 ## 依赖
 
-- 若使用默认后端：已安装并在 `PATH` 中的 **`dms`**（DankMaterialShell）。
-- 可选：`notify-send`（`libnotify`），通过 `-notify-backend notify-send` 使用最高紧急级桌面通知。
+- **`dms`**（DankMaterialShell）：`notify_urgency` 为 **`normal`** 时走 `dms notify`。
+- **`notify-send`**（`libnotify`）：**`critical` / `low`** 严重程度或非 `normal` 的 DMS 模式会调用，用于传递 Freedesktop 紧急度（与 DMS 里 `notificationTimeoutCritical` 等规则一致）。
 
 ## 构建
 
@@ -31,7 +33,7 @@ go build -o net-notify ./cmd/net-notify
 ./net-notify check
 ```
 
-配置文件为 **JSON**（见 [packaging/config.example.json](packaging/config.example.json)）。使用 `-config` 指定；命令行 flag 会覆盖文件中对应项（URL 若在命令行出现 `-url`，则**仅使用**命令行 URL）。配置项 `verbose: true` 或 `run -verbose` 会在每轮探测后向 stderr 打一行摘要，便于 `journalctl --user -u net-notify` 对照间隔（默认 `interval` 为 **1m**）。
+配置文件为 **JSON**（见 [packaging/config.example.json](packaging/config.example.json)）。使用 `-config` 指定；命令行 flag 会覆盖文件中对应项（URL 若在命令行出现 `-url`，则**仅使用**命令行 URL）。配置项 `verbose: true` 或 `run -verbose` 会在每轮探测后向 stderr 打一行摘要，便于 `journalctl --user -u net-notify` 对照间隔（默认 `interval` 为 **1m**）。**`notify_urgency`**：`low` | `normal` | `critical`（默认 `critical`）。
 
 **说明**：程序**只在探测失败时**推送通知；网络一直正常时不会弹窗（除你手动执行的 `test-notify`）。DMS 经 DBus 发送通知时，**过长/过长的纯中文标题**可能触发其内部错误；默认失败标题已缩短为 **`网络探测失败`**。
 

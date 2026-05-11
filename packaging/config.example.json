@@ -12,5 +12,6 @@
   "notify_app": "net-notify",
   "notify_backend": "dms",
   "dms_path": "",
-  "verbose": false
+  "verbose": false,
+  "notify_urgency": "critical"
 }

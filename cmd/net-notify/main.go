@@ -33,6 +33,7 @@ type runOptions struct {
 	once           bool
 	alertCooldown  time.Duration
 	notifyBackend  string
+	notifyUrgency  string
 	notifyTimeout  int
 	notifyIcon     string
 	notifyApp      string
@@ -89,6 +90,8 @@ func usage() {
   -once               只运行一轮后退出（仍会在失败时通知，但不使用冷却；仅 run）
   -alert-cooldown     持续失败时的重复通知最小间隔（默认 15m，仅 run 且非 -once）
   -notify-backend     dms | notify-send（默认 dms）
+  -notify-urgency    严重程度：low | normal | critical（默认 critical；与 DMS 设置里的低/普通/紧急对应）
+                      说明：dms notify 子命令无 urgency 参数；非 normal 时使用 notify-send -u（仍由 DMS 通知服务接收）
   -notify-timeout-ms  dms notify --timeout（毫秒）
   -notify-icon        dms notify --icon
   -notify-app         dms notify --app
@@ -98,6 +101,7 @@ func usage() {
 test-notify 额外 flags:
   -summary string      自定义通知标题（默认内置测试标题）
   -body string          自定义通知正文（默认带时间戳的测试正文）
+  -notify-urgency       同 run
 
 `)
 }
@@ -149,6 +153,9 @@ func mergeConfig(base runOptions, path string) (runOptions, error) {
 	if f.DMSPath != "" {
 		base.dmsPath = f.DMSPath
 	}
+	if f.NotifyUrgency != "" {
+		base.notifyUrgency = f.NotifyUrgency
+	}
 	if f.Verbose {
 		base.verbose = true
 	}
@@ -178,6 +185,7 @@ func parseRunFlags(args []string, base runOptions) (runOptions, error) {
 	fs.BoolVar(&o.once, "once", false, "single round then exit")
 	fs.DurationVar(&o.alertCooldown, "alert-cooldown", o.alertCooldown, "min time between repeated failure alerts")
 	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "dms or notify-send")
+	fs.StringVar(&o.notifyUrgency, "notify-urgency", o.notifyUrgency, "low, normal, or critical")
 	fs.IntVar(&o.notifyTimeout, "notify-timeout-ms", o.notifyTimeout, "dms notify --timeout (ms)")
 	fs.StringVar(&o.notifyIcon, "notify-icon", o.notifyIcon, "dms notify --icon")
 	fs.StringVar(&o.notifyApp, "notify-app", o.notifyApp, "dms notify --app")
@@ -202,6 +210,7 @@ func parseTestNotifyFlags(args []string, base runOptions) (runOptions, string, s
 	fs.StringVar(&o.notifyIcon, "notify-icon", o.notifyIcon, "dms notify --icon")
 	fs.StringVar(&o.notifyApp, "notify-app", o.notifyApp, "dms notify --app")
 	fs.StringVar(&o.dmsPath, "dms-path", o.dmsPath, "path to dms binary")
+	fs.StringVar(&o.notifyUrgency, "notify-urgency", o.notifyUrgency, "low, normal, or critical")
 	fs.StringVar(&summaryFlag, "summary", "", "notification summary (default if empty)")
 	fs.StringVar(&bodyFlag, "body", "", "notification body (default if empty)")
 	if err := fs.Parse(args); err != nil {
@@ -229,7 +238,7 @@ func testNotifyCmd(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	n := buildNotifier(o.notifyBackend, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
+	n := buildNotifier(o.notifyBackend, o.notifyUrgency, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
 	summary = notify.TruncateSummary(summary, 120)
 	body = notify.TruncateBody(body, 8000)
 
@@ -251,12 +260,17 @@ func effectiveURLs(urls []string) []string {
 	return append([]string(nil), urls...)
 }
 
-func buildNotifier(backend string, dmsPath, app string, timeoutMs int, icon string) notify.Notifier {
+func buildNotifier(backend, urgency, dmsPath, app string, timeoutMs int, icon string) notify.Notifier {
+	u := notify.NormalizeUrgency(urgency)
 	switch notify.BackendName(backend) {
 	case notify.BackendNotifySend:
-		return notify.NotifySend{}
+		return &notify.NotifySend{Urgency: u, App: app, Icon: icon, TimeoutMs: timeoutMs}
 	default:
-		return &notify.DMS{Path: dmsPath, App: app, TimeoutMs: timeoutMs, Icon: icon}
+		// dms subcommand cannot set urgency; use notify-send for non-normal so DMS NotificationServer still gets hints.
+		if u == notify.UrgencyNormal {
+			return &notify.DMS{Path: dmsPath, App: app, TimeoutMs: timeoutMs, Icon: icon}
+		}
+		return &notify.NotifySend{Urgency: u, App: app, Icon: icon, TimeoutMs: timeoutMs}
 	}
 }
 
@@ -273,7 +287,7 @@ func runCmd(args []string) {
 	}
 	urls := effectiveURLs(o.urls)
 	cd := &state.Cooldown{Cooldown: o.alertCooldown}
-	n := buildNotifier(o.notifyBackend, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
+	n := buildNotifier(o.notifyBackend, o.notifyUrgency, o.dmsPath, o.notifyApp, o.notifyTimeout, o.notifyIcon)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
