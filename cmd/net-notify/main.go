@@ -53,7 +53,7 @@ func defaults() runOptions {
 		interval:       time.Minute,
 		requestTimeout: 10 * time.Second,
 		alertCooldown:  15 * time.Minute,
-		notifyBackend:  notify.BackendDMS,
+		notifyBackend:  notify.BackendNotifySend,
 		notifyTimeout:  30000,
 		notifyIcon:     "network-error",
 		notifyApp:      "net-notify",
@@ -82,12 +82,12 @@ func main() {
 }
 
 func usage() {
-	fmt.Print(`net-notify — 网络连通性探测，失败时通过 dms / notify-send 发出通知
+	fmt.Print(`net-notify — 网络连通性探测，失败时通过 notify-send（默认）或 dms 发出通知
 
 用法:
   net-notify run [flags]            持续探测（默认每分钟）
   net-notify check [flags]          单次探测，仅设置退出码（不发送通知）
-  net-notify test-notify [flags]    发送一条测试通知，验证 dms / notify-send 是否可用
+  net-notify test-notify [flags]    发送一条测试通知，验证 notify-send / dms 是否可用
 
 常用 flags:
   -config string      JSON 配置文件路径
@@ -97,13 +97,13 @@ func usage() {
   -notify-when        与 -url 联用：flat 一组 URL 的策略 any-fail | all-fail（默认 any-fail）
   -once               只运行一轮后退出（仍会在失败时通知，但不使用冷却；仅 run）
   -alert-cooldown     持续失败时的重复通知最小间隔（默认 15m，仅 run 且非 -once）
-  -notify-backend     dms | notify-send（默认 dms）
-  -notify-urgency    严重程度：low | normal | critical（默认 critical；与 DMS 设置里的低/普通/紧急对应）
-                      说明：dms notify 子命令无 urgency 参数；非 normal 时使用 notify-send -u（仍由 DMS 通知服务接收）
-  -notify-timeout-ms  dms notify --timeout（毫秒）
-  -notify-icon        dms notify --icon
-  -notify-app         dms notify --app
-  -dms-path           dms 可执行文件路径（默认 PATH 中 dms）
+  -notify-backend     notify-send | dms（默认 notify-send）
+  -notify-urgency    严重程度：low | normal | critical（默认 critical；Freedesktop 低/普通/紧急）
+                      说明：选用 dms 且为 normal 时走 dms notify；否则走 notify-send -u（由桌面通知服务显示）
+  -notify-timeout-ms  通知超时（毫秒；notify-send -t）
+  -notify-icon        notify-send -i / dms --icon
+  -notify-app         notify-send -a / dms --app
+  -dms-path           选用 dms 后端时 dms 可执行文件路径（默认 PATH 中 dms）
   -verbose            每轮探测后向 stderr 打印一行摘要（便于 journalctl 观察周期）
 
 test-notify 额外 flags:
@@ -200,7 +200,7 @@ func parseRunFlags(args []string, base runOptions) (runOptions, error) {
 	fs.StringVar(&o.notifyWhen, "notify-when", o.notifyWhen, "any-fail or all-fail (flat -url list only)")
 	fs.BoolVar(&o.once, "once", false, "single round then exit")
 	fs.DurationVar(&o.alertCooldown, "alert-cooldown", o.alertCooldown, "min time between repeated failure alerts")
-	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "dms or notify-send")
+	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "notify-send (default) or dms")
 	fs.StringVar(&o.notifyUrgency, "notify-urgency", o.notifyUrgency, "low, normal, or critical")
 	fs.IntVar(&o.notifyTimeout, "notify-timeout-ms", o.notifyTimeout, "dms notify --timeout (ms)")
 	fs.StringVar(&o.notifyIcon, "notify-icon", o.notifyIcon, "dms notify --icon")
@@ -223,7 +223,7 @@ func parseTestNotifyFlags(args []string, base runOptions) (runOptions, string, s
 	o := base
 	var summaryFlag, bodyFlag string
 	fs.StringVar(&o.configPath, "config", "", "JSON config path")
-	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "dms or notify-send")
+	fs.StringVar(&o.notifyBackend, "notify-backend", o.notifyBackend, "notify-send (default) or dms")
 	fs.IntVar(&o.notifyTimeout, "notify-timeout-ms", o.notifyTimeout, "dms notify --timeout (ms)")
 	fs.StringVar(&o.notifyIcon, "notify-icon", o.notifyIcon, "dms notify --icon")
 	fs.StringVar(&o.notifyApp, "notify-app", o.notifyApp, "dms notify --app")

@@ -20,7 +20,7 @@
   "notify_timeout_ms": 30000,
   "notify_icon": "network-error",
   "notify_app": "net-notify",
-  "notify_backend": "dms",
+  "notify_backend": "notify-send",
   "dms_path": "",
   "verbose": false,
   "notify_urgency": "critical"

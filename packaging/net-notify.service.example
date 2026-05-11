@@ -1,5 +1,5 @@
 [Unit]
-Description=Network connectivity probe with DMS notifications
+Description=Network connectivity probe with desktop notifications (notify-send / optional dms)
 After=network-online.target
 
 [Service]
@@ -8,7 +8,7 @@ ExecStart=/usr/local/bin/net-notify run --config %h/.config/net-notify/config.js
 Restart=on-failure
 RestartSec=10
 
-# Ensure `dms` is found if installed outside standard paths:
+# Ensure notify-send or dms is on PATH if installed outside standard locations:
 # Environment=PATH=/usr/local/bin:/usr/bin
 PassEnvironment=DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR
 

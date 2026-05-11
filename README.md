@@ -2,12 +2,12 @@
 
 周期性探测公网 URL 的连通性。**无配置文件且命令行未指定 `-url`** 时，内置两大站点的默认分组：**Google + GitHub** 一组（`all_fail`，两者都失败才告警该组）、**百度**一组（`any_fail`）；亦可在 JSON 中用 **`groups`** 自定义。**多组并存时任一组满足自身策略即视为本轮告警**。仅写 **`urls`** 的 flat 配置表示整表任一失败告警。HTTP 请求带 **no-cache** 相关头，不启用磁盘缓存。
 
-默认 **严重程度（urgency）为 `critical`**：与 DMS 设置中的「紧急」一致；因 `dms notify` CLI **无** urgency 参数，此时实际通过 **`notify-send -u critical`** 发送（由 DMS / Freedesktop 通知服务接收）。若将 `notify_urgency` 设为 **`normal`**，则改用 **`dms notify`**。亦可 `-notify-backend notify-send` 并配合 `-notify-urgency`。
+默认 **通知后端为 `notify-send`**（`libnotify`，需在本机图形会话中可用）。**严重程度（urgency）默认 `critical`**，经 **`notify-send -u critical`** 发往 Freedesktop 通知服务。**若将 `notify_backend` 设为 `dms`**（DankMaterialShell）且 **`notify_urgency` 为 `normal`**，则走 **`dms notify`**；其它 urgency 下即使用 `dms` 后端仍会 **回退到 `notify-send -u`**（因 `dms notify` 无法单独设紧急度）。
 
 ## 依赖
 
-- **`dms`**（DankMaterialShell）：`notify_urgency` 为 **`normal`** 时走 `dms notify`。
-- **`notify-send`**（`libnotify`）：**`critical` / `low`** 严重程度或非 `normal` 的 DMS 模式会调用，用于传递 Freedesktop 紧急度（与 DMS 里 `notificationTimeoutCritical` 等规则一致）。
+- **`notify-send`**（`libnotify`，**默认后端**）：桌面通知；与 DMS Material shell 等共用 DBus 管线时也可显示。
+- **`dms`**（DankMaterialShell，**可选**）：仅当 **`notify_backend`** 为 **`dms`** 且 **`notify_urgency` 为 `normal`** 时必须；用于走 `dms notify`。
 
 ## 构建
 
@@ -15,7 +15,7 @@
 go build -o net-notify ./cmd/net-notify
 ```
 
-或从发布页下载预编译二进制。
+或从 GitHub Release 下载 **Linux** 预编译包（**amd64**、**arm64** 的 `.tar.gz`，及 `checksums.txt`）。
 
 ## 用法
 
@@ -69,7 +69,7 @@ go build -o net-notify ./cmd/net-notify
   "notify_timeout_ms": 30000,
   "notify_icon": "network-error",
   "notify_app": "net-notify",
-  "notify_backend": "dms",
+  "notify_backend": "notify-send",
   "dms_path": "",
   "verbose": false,
   "notify_urgency": "critical"
@@ -78,7 +78,7 @@ go build -o net-notify ./cmd/net-notify
 
 仅用顶层 **`urls`**、不做分组的写法仍受支持（整表 `any_fail`）。
 
-**说明**：程序**只在探测失败时**推送通知；网络一直正常时不会弹窗（除你手动执行的 `test-notify`）。DMS 经 DBus 发送通知时，**过长/过长的纯中文标题**可能触发其内部错误；默认失败标题已缩短为 **`网络探测失败`**。
+**说明**：程序**只在探测失败时**推送通知；网络一直正常时不会弹窗（除你手动执行的 `test-notify`）。经 DBus / 通知服务器发送时，**过长或特殊标题**可能触发实现方错误；默认失败标题已缩短为 **`网络探测失败`**。
 
 ### 告警冷却
 
@@ -108,17 +108,15 @@ go test ./...
 go vet ./...
 ```
 
-## 发版（维护者）
+CI：`push`/`pull_request` 至 `main`（或 `master`）时在 **linux/amd64**（`ubuntu-latest`）与 **linux/arm64**（`ubuntu-24.04-arm`）上跑同一套命令。
 
-推送 semver 标签触发 [GoReleaser](https://goreleaser.com/) 工作流，生成 GitHub Release 与校验文件：
+Release 工作流由 [GoReleaser](https://goreleaser.com/) 打包，**仅提供 Linux `amd64` 与 `arm64`**（`net-notify_<version>_linux_<arch>.tar.gz` 及 `checksums.txt`）。推送 semver 标签即触发：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 将 `go.mod` 中的 `module` 改为你的 `github.com/<用户>/net-notify` 后再推送，以便 `go install` 路径一致。
-
-## 许可证
 
 MIT
